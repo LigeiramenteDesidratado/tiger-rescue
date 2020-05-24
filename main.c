@@ -1,8 +1,6 @@
 #include <SDL2/SDL_error.h>
-#include <SDL2/SDL_events.h>
 #include <SDL2/SDL_log.h>
 #include <SDL2/SDL_rect.h>
-#include <SDL2/SDL_render.h>
 #include <SDL2/SDL_scancode.h>
 #include <SDL2/SDL_stdinc.h>
 #include <SDL2/SDL_surface.h>
@@ -19,6 +17,7 @@
 
 // Game variables related
 #include "defs.h"
+#include "structs.h"
 
 
 // Declarations
@@ -31,11 +30,11 @@ void game_quit(void);
 void init_stage(void);
 static void init_player(void);
 
-SDL_Texture* load_terxture(const char* filename);
-void blit(SDL_Texture *texture, int x, int y);
+static SDL_Texture* load_terxture(const char*);
+static void blit(SDL_Texture*, int, int);
 
-void do_key_up(SDL_KeyboardEvent* event);
-void do_key_down(SDL_KeyboardEvent* event);
+static void do_key_up(SDL_KeyboardEvent*);
+static void do_key_down(SDL_KeyboardEvent*);
 
 static void logic(void);
 static void do_player(void);
@@ -47,7 +46,9 @@ static void draw(void);
 static void draw_player(void);
 static void draw_bullets(void);
 static void draw_enemy(void);
-static void capFrameRate(long *then, float *remainder);
+static int bullet_hit_enemy(Entity*);
+static int detect_colision(Entity*, Entity*);
+static void capFrameRate(long*, float*);
 
 
 // Temp
@@ -55,57 +56,6 @@ SDL_Texture* gBulletTexture;
 SDL_Texture* gEnemyTexture;
 int enemySpawnTimer;
 
-typedef struct {
-    void (*logic)(void);
-    void (*draw)(void);
-} Delegate;
-
-typedef struct Entity {
-    float x;
-    float y;
-    int w;
-    int h;
-    float dx;
-    float dy;
-    int heath;
-    int reload;
-    SDL_Texture* texture;
-    struct Entity* next;
-
-    void (*do_entity)(void);
-
-} Entity;
-
-typedef struct {
-        unsigned int w;
-        unsigned int h;
-        const char* name;
-        SDL_Window* window;
-        SDL_Renderer* renderer;
-
-} Screen;
-
-typedef struct {
-    SDL_Texture* (*load_terxture)(const char* filename);
-    void (*blit)(SDL_Texture *texture, int x, int y);
-
-} Graphics;
-
-typedef struct{
-    int keyboard[MAX_KEYBOARD_KEYS];
-    void (*do_input)(void);
-    void (*do_key_up)(SDL_KeyboardEvent* event);
-    void (*do_key_down)(SDL_KeyboardEvent* event);
-
-} Input;
-
-typedef struct {
-    Entity playerHead, *playerTail;
-    Entity bulletHead, *bulletTail;
-    Entity enemyHead, *enemyTail;
-    void (*init_stage)(void);
-
-} Stage;
 
 static struct {
     // Define attributes
@@ -130,6 +80,8 @@ static struct {
         Entity* player;
         Entity* bullet;
         Entity* enemy;
+
+        int (*detect_colision)(Entity*, Entity*);
 
     } entities;
 
@@ -185,7 +137,8 @@ static struct {
     .entities = {
         .player = &(Entity) {.do_entity = do_player},
         .bullet = &(Entity) {.do_entity = do_bullets},
-        .enemy = &(Entity) {.do_entity = do_enemies}
+        .enemy = &(Entity) {.do_entity = do_enemies},
+        .detect_colision = detect_colision
     },
 
     game_init,
@@ -377,7 +330,7 @@ static void do_enemies(void) {
         e->x += e->dx;
         e->y += e->dy;
 
-        if (e->x < -e->w) {
+        if (e->x < -e->w || e->heath == 0) {
             if (e == Game.stage->enemyTail) {
                 Game.stage->enemyTail = prev;
             }
@@ -400,6 +353,7 @@ static void spawn_enemy(void) {
     if (--enemySpawnTimer <= 0) {
         Game.stage->enemyTail->next = enemy;
         Game.stage->enemyTail = enemy;
+        enemy->heath = 1;
 
         enemy->texture = gEnemyTexture;
         SDL_QueryTexture(enemy->texture, NULL, NULL, &enemy->w, &enemy->h);
@@ -429,7 +383,7 @@ static void do_bullets(void) {
         b->x += b->dx;
         b->y += b->dy;
 
-        if (b->x > SCREEN_W) {
+        if (bullet_hit_enemy(b) || b->x > SCREEN_W) {
             if (b == Game.stage->bulletTail) {
                 Game.stage->bulletTail = prev;
             }
@@ -440,6 +394,27 @@ static void do_bullets(void) {
 
         prev = b;
     }
+}
+
+static int bullet_hit_enemy(Entity* b) {
+
+    Entity* e;
+
+    for(e = Game.stage->enemyHead.next; e != NULL; e = e->next) {
+        if (detect_colision(b, e)) {
+            b->heath = 0;
+            e->heath = 0;
+            return 1;
+        }
+    }
+
+    return 0;
+}
+
+
+static int detect_colision(Entity* ent1, Entity* ent2) {
+    return (MAX(ent1->x, ent2->x) < MIN(ent1->x + ent1->w, ent2->x + ent2->w))
+        && (MAX(ent1->y, ent2->y) < MIN(ent1->y + ent1->h, ent2->y + ent2->h));
 }
 
 static void fire_bullet(void) {
@@ -478,7 +453,7 @@ void present_scene(void) {
     SDL_RenderPresent(Game.screen->renderer);
 }
 
-SDL_Texture* load_terxture(const char* filename) {
+static SDL_Texture* load_terxture(const char* filename) {
     SDL_Texture* texture;
     SDL_LogMessage(SDL_LOG_CATEGORY_APPLICATION, SDL_LOG_PRIORITY_INFO, "Loading %s", filename);
 
@@ -493,7 +468,7 @@ SDL_Texture* load_terxture(const char* filename) {
 
 // The blit function simply draws the specified texture on screen
 // at specified x and y coordinates
-void blit(SDL_Texture *texture, int x, int y) {
+static void blit(SDL_Texture *texture, int x, int y) {
     SDL_Rect dest;
 
     dest.x = x;
@@ -503,14 +478,14 @@ void blit(SDL_Texture *texture, int x, int y) {
     SDL_RenderCopy(Game.screen->renderer, texture, NULL, &dest);
 }
 
-void do_key_up(SDL_KeyboardEvent* event) {
+static void do_key_up(SDL_KeyboardEvent* event) {
     // check if the keyboard event was a result of  Keyboard repeat event
     if (event->repeat == 0 && event->keysym.scancode < MAX_KEYBOARD_KEYS) {
         Game.input->keyboard[event->keysym.scancode] = 0;
     }
 }
 
-void do_key_down(SDL_KeyboardEvent* event) {
+static void do_key_down(SDL_KeyboardEvent* event) {
     // check if the keyboard event was a result of  Keyboard repeat event
     if (event->repeat == 0 && event->keysym.scancode < MAX_KEYBOARD_KEYS) {
         Game.input->keyboard[event->keysym.scancode] = 1;
