@@ -22,8 +22,6 @@ typedef struct Entity {
     SDL_Texture* texture;
     Entity* next;
 
-    void (*do_entity)(void);
-
 } Entity;
 
 typedef struct {
@@ -36,7 +34,7 @@ typedef struct {
 } Screen;
 
 typedef struct {
-    SDL_Texture* (*load_terxture)(const char* filename);
+    SDL_Texture* (*load_texture)(const char* filename);
     void (*blit)(SDL_Texture *texture, int x, int y);
 
 } Graphics;
@@ -51,8 +49,9 @@ typedef struct{
 
 typedef struct {
     Entity playerHead, *playerTail;
-    Entity bulletHead, *bulletTail;
+    Entity playerBulletHead, *playerBulletTail;
     Entity enemyHead, *enemyTail;
+    Entity enemyBulletHead, *enemyBulletTail;
     void (*init_stage)(void);
 
 } Stage;
