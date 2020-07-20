@@ -75,8 +75,8 @@ static SDL_Texture* gPlayerBulletTexture;
 static SDL_Texture* gEnemyTexture;
 static SDL_Texture* gEnemyBulletTexture;
 static SDL_Texture* gPlayerTexture;
-static SDL_Texture* gBackGround;
-static SDL_Texture* gExplosion;
+static SDL_Texture* gBackGroundTexture;
+static SDL_Texture* gExplosionTexture;
 
 static int backgroundX;
 static int enemySpawnTimer;
@@ -248,10 +248,10 @@ void game_quit(void) {
     SDL_DestroyTexture(gEnemyTexture);
     gEnemyTexture = NULL;
 
-    SDL_DestroyTexture(gBackGround);
+    SDL_DestroyTexture(gBackGroundTexture);
     gEnemyTexture = NULL;
 
-    SDL_DestroyTexture(gExplosion);
+    SDL_DestroyTexture(gExplosionTexture);
     gEnemyTexture = NULL;
 
     SDL_DestroyRenderer(Game.screen->renderer);
@@ -287,7 +287,6 @@ void do_input(void) {
 
 static void init_stage(void) {
 
-
     gPlayerTexture = Game.graphics->load_texture("gfx/player.png");
     if (gPlayerTexture == NULL) {
         printf("Failed to load player texture! SDL Error %s\n", SDL_GetError());
@@ -312,22 +311,83 @@ static void init_stage(void) {
         exit(1);
     }
 
-    gBackGround = Game.graphics->load_texture("gfx/background.png");
-    if (gBackGround == NULL) {
-        printf("Failed to load background texture! SDL Error %s\n", SDL_GetError());
-        exit(1);
+    gBackGroundTexture = Game.graphics->load_texture("gfx/background.png");
+    if (gBackGroundTexture == NULL) {
+      printf("Failed to load background texture! SDL Error %s\n",
+             SDL_GetError());
+      exit(1);
     }
 
-    gExplosion = Game.graphics->load_texture("gfx/explosion.png");
-    if (gExplosion == NULL) {
-        printf("Failed to load explosion texture! SDL Error %s\n", SDL_GetError());
-        exit(1);
+    gExplosionTexture = Game.graphics->load_texture("gfx/explosion.png");
+    if (gExplosionTexture == NULL) {
+      printf("Failed to load explosion texture! SDL Error %s\n",
+             SDL_GetError());
+      exit(1);
     }
-
 
     Game.stage->reset_stage();
-    enemySpawnTimer = 0;
 
+}
+
+static void reset_stage(void) {
+
+    Entity* e;
+    Explosion* Exp;
+    Debris* Deb;
+
+    while (Game.stage->enemyBulletHead.next) {
+        e = Game.stage->enemyBulletHead.next;
+        Game.stage->enemyBulletHead.next = e->next;
+        free(e);
+    }
+
+    while (Game.stage->enemyHead.next) {
+        e = Game.stage->enemyHead.next;
+        Game.stage->enemyHead.next = e->next;
+        free(e);
+    }
+
+    while (Game.stage->playerBulletHead.next) {
+        e = Game.stage->playerBulletHead.next;
+        Game.stage->playerBulletHead.next = e->next;
+        free(e);
+    }
+
+    while (Game.stage->playerHead.next) {
+        e = Game.stage->playerHead.next;
+        Game.stage->playerHead.next = e->next;
+        free(e);
+    }
+
+    while (Game.stage->explosionHead.next) {
+        Exp = Game.stage->explosionHead.next;
+        Game.stage->explosionHead.next = Exp->next;
+        free(Exp);
+    }
+
+    while (Game.stage->debrisHead.next) {
+        Deb = Game.stage->debrisHead.next;
+        Game.stage->debrisHead.next = Deb->next;
+        free(Deb);
+    }
+
+    memset(Game.stage, 0, sizeof(Stage));
+
+    Game.stage->playerTail = &Game.stage->playerHead;
+    Game.stage->playerBulletTail = &Game.stage->playerBulletHead;
+    Game.stage->enemyBulletTail = &Game.stage->enemyBulletHead;
+    Game.stage->enemyTail = &Game.stage->enemyHead;
+    Game.stage->explosionTail = &Game.stage->explosionHead;
+    Game.stage->debrisTail = &Game.stage->debrisHead;
+
+    Game.stage->init_stage = init_stage;
+    Game.stage->reset_stage = reset_stage;
+
+    init_player();
+    init_starfield();
+
+    enemySpawnTimer = 0;
+    stageResetTimer = FPS*3;
 }
 
 static void init_player(void) {
@@ -377,11 +437,11 @@ static void logic(void) {
 
         do_enemy_bullets();
 
-        spawn_enemy();
-
         do_explosions();
 
         do_debris();
+
+        spawn_enemy();
 }
 
 static void do_background(void) {
@@ -457,6 +517,8 @@ static void do_debris(void) {
 
 static void do_player(void) {
     // Alias
+    if (Game.entities.player != NULL){
+
     Entity* player = Game.entities.player;
 
         player->dx = player->dy = 0;
@@ -491,6 +553,8 @@ static void do_player(void) {
 
         player->x += player->dx;
         player->y += player->dy;
+    }
+
 }
 
 static void do_enemies(void) {
@@ -690,6 +754,11 @@ static int bullet_hit_enemy(Entity* b) {
 }
 
 static int bullet_hit_player(Entity* b) {
+
+    if (Game.entities.player == NULL) {
+        return 0;
+    }
+
     Entity* e;
 
     for(e = Game.stage->playerHead.next; e != NULL; e = e->next) {
@@ -856,7 +925,7 @@ static void draw_background(void) {
         dest.w = SCREEN_W;
         dest.h = SCREEN_H;
 
-        SDL_RenderCopy(Game.screen->renderer, gBackGround, NULL, &dest);
+        SDL_RenderCopy(Game.screen->renderer, gBackGroundTexture, NULL, &dest);
     }
 }
 
@@ -886,12 +955,12 @@ static void draw_explosions(void) {
     Explosion *e;
 
     SDL_SetRenderDrawBlendMode(Game.screen->renderer, SDL_BLENDMODE_ADD);
-    SDL_SetTextureBlendMode(gExplosion, SDL_BLENDMODE_ADD);
+    SDL_SetTextureBlendMode(gExplosionTexture, SDL_BLENDMODE_ADD);
 
     for (e = Game.stage->explosionHead.next; e != NULL; e = e->next) {
-        SDL_SetTextureColorMod(gExplosion, e->r, e->g, e->b);
-        SDL_SetTextureAlphaMod(gExplosion, e->a);
-        blit(gExplosion, e->x, e->y);
+      SDL_SetTextureColorMod(gExplosionTexture, e->r, e->g, e->b);
+      SDL_SetTextureAlphaMod(gExplosionTexture, e->a);
+      blit(gExplosionTexture, e->x, e->y);
     }
 
     SDL_SetRenderDrawBlendMode(Game.screen->renderer, SDL_BLENDMODE_NONE);
@@ -899,8 +968,10 @@ static void draw_explosions(void) {
 }
 
 static void draw_player(void) {
-    Entity* player = Game.entities.player;
-    Game.graphics->blit(player->texture, player->x, player->y);
+    if (Game.entities.player != NULL){
+        Entity* player = Game.entities.player;
+        Game.graphics->blit(player->texture, player->x, player->y);
+    }
 }
 
 static void draw_bullets(void) {
@@ -917,67 +988,6 @@ static void draw_enemy_bullets(void) {
     for (b = Game.stage->enemyBulletHead.next; b != NULL; b = b->next) {
         Game.graphics->blit(b->texture, b->x, b->y);
     }
-}
-
-static void reset_stage(void) {
-
-    Entity* e;
-    Explosion* Exp;
-    Debris* Deb;
-
-    while (Game.stage->enemyBulletHead.next) {
-        e = Game.stage->enemyBulletHead.next;
-        Game.stage->enemyBulletHead.next = e->next;
-        free(e);
-    }
-
-    while (Game.stage->enemyHead.next) {
-        e = Game.stage->enemyHead.next;
-        Game.stage->enemyHead.next = e->next;
-        free(e);
-    }
-
-    while (Game.stage->playerBulletHead.next) {
-        e = Game.stage->playerBulletHead.next;
-        Game.stage->playerBulletHead.next = e->next;
-        free(e);
-    }
-
-    while (Game.stage->playerHead.next) {
-        e = Game.stage->playerHead.next;
-        Game.stage->playerHead.next = e->next;
-        free(e);
-    }
-
-    while (Game.stage->explosionHead.next) {
-        Exp = Game.stage->explosionHead.next;
-        Game.stage->explosionHead.next = Exp->next;
-        free(Exp);
-    }
-
-    while (Game.stage->debrisHead.next) {
-        Deb = Game.stage->debrisHead.next;
-        Game.stage->debrisHead.next = Deb->next;
-        free(Deb);
-    }
-
-    memset(Game.stage, 0, sizeof(Stage));
-
-    Game.stage->playerTail = &Game.stage->playerHead;
-    Game.stage->playerBulletTail = &Game.stage->playerBulletHead;
-    Game.stage->enemyBulletTail = &Game.stage->enemyBulletHead;
-    Game.stage->enemyTail = &Game.stage->enemyHead;
-    Game.stage->explosionTail = &Game.stage->explosionHead;
-    Game.stage->debrisTail = &Game.stage->debrisHead;
-
-    Game.stage->init_stage = init_stage;
-    Game.stage->reset_stage = reset_stage;
-
-    init_player();
-    init_starfield();
-
-    enemySpawnTimer = 0;
-    stageResetTimer = FPS*3;
 }
 
 static void calc_slope(int srcX, int srcY, int dstX, int dstY, float *refX, float * refY) {
@@ -1043,10 +1053,8 @@ int main(int argc, char* argv[]) {
             Game.stage->reset_stage();
         };
 
-        if (Game.entities.player != NULL){
             Game.delegate->logic();
             Game.delegate->draw();
-        }
 
         Game.present_scene();
         capFrameRate(&then, &remainder);
