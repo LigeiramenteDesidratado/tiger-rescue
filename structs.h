@@ -1,4 +1,5 @@
 #include <SDL2/SDL_events.h>
+#include <SDL2/SDL_rect.h>
 #include <SDL2/SDL_render.h>
 #include "defs.h"
 
@@ -36,6 +37,7 @@ typedef struct {
 typedef struct {
     SDL_Texture* (*load_texture)(const char* filename);
     void (*blit)(SDL_Texture *texture, int x, int y);
+    void (*blitRect)(SDL_Texture* texture, SDL_Rect* src, int x, int y);
 
 } Graphics;
 
@@ -47,11 +49,46 @@ typedef struct{
 
 } Input;
 
+
+typedef struct Explosion Explosion;
+typedef struct Explosion {
+    float x;
+    float y;
+    float dx;
+    float dy;
+    int r, g, b, a;
+    Explosion *next;
+} Explosion;
+
+typedef struct Debris Debris;
+typedef struct Debris {
+    float x;
+    float y;
+    float dx;
+    float dy;
+    SDL_Rect rect;
+    SDL_Texture *texture;
+    int life;
+    Debris *next;
+} Debris;
+
 typedef struct {
     Entity playerHead, *playerTail;
     Entity playerBulletHead, *playerBulletTail;
     Entity enemyHead, *enemyTail;
     Entity enemyBulletHead, *enemyBulletTail;
+
+    Explosion explosionHead, *explosionTail;
+    Debris debrisHead, *debrisTail;
     void (*init_stage)(void);
+    void (*reset_stage)(void);
 
 } Stage;
+
+typedef struct {
+    int x;
+    int y;
+    int speed;
+
+} Star;
+
