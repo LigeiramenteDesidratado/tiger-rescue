@@ -9,6 +9,7 @@
 #include <SDL2/SDL_timer.h>
 #include <SDL2/SDL_video.h>
 #include <SDL2/SDL_image.h>
+#include <SDL2/SDL_mixer.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdbool.h>
@@ -20,7 +21,6 @@
 // Game variables related
 #include "defs.h"
 #include "structs.h"
-
 
 // Declarations
 void game_init(void);
@@ -59,16 +59,26 @@ static void draw_background(void);
 static void draw_startfield(void);
 static void draw_debris(void);
 static void draw_explosions(void);
+static void draw_hud(void);
 
 static void fire_bullet(void);
 static void fire_enemy_bullet(Entity*);
 static void init_player(void);
 static void init_starfield(void);
 static void init_stage(void);
+static void init_sounds(void);
 static void logic(void);
 static void reset_stage(void);
 static void spawn_enemy(void);
 
+static void init_sounds(void);
+static void load_sounds(void);
+static void play_sound(int, int);
+static void load_music(char*);
+static void play_music(int);
+
+static void draw_text(int, int ,int ,int ,int, char*, ...);
+static int highscore;
 
 // Temp
 static SDL_Texture* gPlayerBulletTexture;
@@ -77,6 +87,7 @@ static SDL_Texture* gEnemyBulletTexture;
 static SDL_Texture* gPlayerTexture;
 static SDL_Texture* gBackGroundTexture;
 static SDL_Texture* gExplosionTexture;
+static SDL_Texture* gFontTexture;
 
 static int backgroundX;
 static int enemySpawnTimer;
@@ -87,11 +98,15 @@ static struct {
     // Define attributes
     SDL_bool running;
 
+    // track of fps
+    float elapsed;
     // All window related
     Screen* screen;
 
     // All graphics related
     Graphics* graphics;
+
+    Sounds* sounds;
 
     Delegate* delegate;
 
@@ -100,6 +115,9 @@ static struct {
 
     // All input related
     Stage* stage;
+
+    // All drawing text related
+    Text* text;
 
     //All entities related
     struct {
@@ -128,6 +146,8 @@ static struct {
 } Game =  {
     SDL_FALSE,
 
+    .elapsed = 0,
+
     // Screen
     .screen = &(Screen) {
         .w = SCREEN_SCALE*SCREEN_W,
@@ -142,6 +162,17 @@ static struct {
         load_texture,
         blit,
         blitRect
+    },
+
+    .sounds = &(Sounds) {
+        .sounds = {},
+        .init_sounds = init_sounds,
+        .load_sounds = load_sounds,
+        .play_sound = play_sound,
+
+        .music = NULL,
+        .load_music = load_music,
+        .play_music = play_music
     },
 
     .delegate = &(Delegate) {
@@ -172,8 +203,15 @@ static struct {
         .debrisHead = {},
         .debrisTail = NULL,
 
+        .score = 0,
+
         .reset_stage = reset_stage,
         .init_stage = init_stage,
+    },
+
+    .text = &(Text) {
+        .drawTextBuffer = {},
+        .draw_text = draw_text,
     },
 
     .entities = {
@@ -196,14 +234,20 @@ static struct {
 
 };
 
-
-
 void game_init(void) {
 
     if (SDL_Init(SDL_INIT_EVERYTHING) != 0) {
         printf("Failed to initialize SDL! SDL Error %s\n", SDL_GetError());
         exit(1);
     };
+
+    if (Mix_OpenAudio(44100, MIX_DEFAULT_FORMAT, 2, 1024) == -1) {
+        printf("Failed to initialize Open Audio! SDL Error %s\n", SDL_GetError());
+        exit(1);
+    }
+
+    Mix_AllocateChannels(MAX_SND_CHANNELS);
+
 
     unsigned int w = Game.screen->w;
     unsigned int h = Game.screen->h;
@@ -225,6 +269,7 @@ void game_init(void) {
         -1,
         SDL_RENDERER_ACCELERATED|SDL_RENDERER_PRESENTVSYNC
     );
+
     if (!Game.screen->renderer) {
         printf("Failed to create renerer: %s\n", SDL_GetError());
         exit(1);
@@ -234,7 +279,6 @@ void game_init(void) {
 }
 
 void game_quit(void) {
-
 
     SDL_DestroyTexture(gPlayerTexture);
     gPlayerTexture = NULL;
@@ -254,11 +298,23 @@ void game_quit(void) {
     SDL_DestroyTexture(gExplosionTexture);
     gEnemyTexture = NULL;
 
+    SDL_DestroyTexture(gFontTexture);
+    gFontTexture = NULL;
+
     SDL_DestroyRenderer(Game.screen->renderer);
     Game.screen->renderer = NULL;
 
     SDL_DestroyWindow(Game.screen->window);
     Game.screen->window = NULL;
+
+    Mix_FreeMusic(Game.sounds->music);
+    Game.sounds->music = NULL;
+
+    int i;
+    for(i = 0; i < SND_MAX; i++) {
+        if (Game.sounds->sounds[i] != NULL)
+            Mix_FreeChunk(Game.sounds->sounds[i]);
+    }
 
     SDL_Quit();
     Game.running = SDL_FALSE;
@@ -325,6 +381,16 @@ static void init_stage(void) {
       exit(1);
     }
 
+    gFontTexture = Game.graphics->load_texture("gfx/font.png");
+    if (gFontTexture == NULL) {
+      printf("Failed to load font texture! SDL Error %s\n",
+             SDL_GetError());
+      exit(1);
+    }
+
+    Game.sounds->load_music("music/Mercury.ogg");
+    Game.sounds->play_music(1);
+
     Game.stage->reset_stage();
 
 }
@@ -382,6 +448,7 @@ static void reset_stage(void) {
 
     Game.stage->init_stage = init_stage;
     Game.stage->reset_stage = reset_stage;
+    Game.stage->score = 0;
 
     init_player();
     init_starfield();
@@ -442,6 +509,81 @@ static void logic(void) {
         do_debris();
 
         spawn_enemy();
+}
+
+static void init_sounds(void) {
+    memset(Game.sounds->sounds, 0, sizeof(Mix_Chunk*) * SND_MAX);
+    Game.sounds->music = NULL;
+
+    Game.sounds->load_sounds();
+}
+
+static void load_sounds(void) {
+    Game.sounds->sounds[SND_PLAYER_FIRE] = Mix_LoadWAV("sfx/334227__jradcoolness__laser.ogg");
+    if (Game.sounds->sounds[SND_PLAYER_FIRE] == NULL) {
+        printf("Failed to load player fire sound! SDL Error %s\n", SDL_GetError());
+        exit(1);
+    }
+    Game.sounds->sounds[SND_ALIEN_FIRE] = Mix_LoadWAV("sfx/196914__dpoggioli__laser-gun.ogg");
+    if (Game.sounds->sounds[SND_ALIEN_FIRE] == NULL) {
+        printf("Failed to load alien fire sound! SDL Error %s\n", SDL_GetError());
+        exit(1);
+    }
+    Game.sounds->sounds[SND_PLAYER_DIE] = Mix_LoadWAV("sfx/245372__quaker540__hq-explosion.ogg");
+    if (Game.sounds->sounds[SND_PLAYER_DIE] == NULL) {
+        printf("Failed to load player die sound! SDL Error %s\n", SDL_GetError());
+        exit(1);
+    }
+    Game.sounds->sounds[SND_ALIEND_DIE] = Mix_LoadWAV("sfx/10 Guage Shotgun-SoundBible.com-74120584.ogg");
+    if (Game.sounds->sounds[SND_ALIEND_DIE] == NULL) {
+        printf("Failed to load alien die sound! SDL Error %s\n", SDL_GetError());
+        exit(1);
+    }
+}
+
+static void play_sound(int id, int channel) {
+    Mix_PlayChannel(channel, Game.sounds->sounds[id], 0);
+}
+
+static void load_music(char* filename) {
+    if (Game.sounds->music != NULL) {
+        Mix_HaltMusic();
+        Mix_FreeMusic(Game.sounds->music);
+        Game.sounds->music = NULL;
+    }
+
+    Game.sounds->music = Mix_LoadMUS(filename);
+}
+static void play_music(int loop) {
+    Mix_PlayMusic(Game.sounds->music, (loop) ? -1:0);
+}
+
+static void draw_text(int x, int y, int r, int g, int b, char *format, ...) {
+    int i, len, c;
+    SDL_Rect rect;
+    va_list args;
+
+    memset(&Game.text->drawTextBuffer, '\0', sizeof(Game.text->drawTextBuffer));
+
+    va_start(args, format);
+    vsprintf(Game.text->drawTextBuffer, format, args);
+    va_end(args);
+
+    len = strlen(Game.text->drawTextBuffer);
+    rect.w = GLYPH_W;
+    rect.h = GLYPH_H;
+    rect.y = 0;
+
+    SDL_SetTextureColorMod(gFontTexture, r, g, b);
+
+    for (i = 0; i<len; i++) {
+        c = Game.text->drawTextBuffer[i];
+        if (c >= ' ' && c <= 'Z') {
+            rect.x = (c - ' ') * GLYPH_W;
+            Game.graphics->blitRect(gFontTexture, &rect, x, y);
+            x += GLYPH_W;
+        }
+    }
 }
 
 static void do_background(void) {
@@ -548,6 +690,7 @@ static void do_player(void) {
         }
 
         if (Game.input->keyboard[SDL_SCANCODE_F] && player->reload == 0) {
+            Game.sounds->play_sound(SND_PLAYER_FIRE, CH_PLAYER);
             fire_bullet();
         }
 
@@ -576,6 +719,7 @@ static void do_enemies(void) {
             e = prev;
         } else if (Game.entities.player != NULL && --e->reload <= 0) {
             fire_enemy_bullet(e);
+            Game.sounds->play_sound(SND_ALIEN_FIRE, CH_ALIEN_FIRE);
         }
 
         prev = e;
@@ -631,8 +775,8 @@ static void add_debris(Entity *e) {
     Debris *d;
     int x, y, w, h;
 
-    w = e->w /2;
-    h = e->h /2;
+    w = e->w /3;
+    h = e->h /4;
 
     for(y = 0; y <= h; y += h) {
         for(x = 0; x <= w; x += w) {
@@ -743,6 +887,9 @@ static int bullet_hit_enemy(Entity* b) {
             b->heath = 0;
             e->heath = 0;
 
+            Game.sounds->play_sound(SND_ALIEND_DIE, CH_ANY);
+            Game.stage->score++;
+            highscore = MAX(Game.stage->score, highscore);
             add_explosions(e->x, e->y, 32);
             add_debris(e);
 
@@ -766,8 +913,9 @@ static int bullet_hit_player(Entity* b) {
             b->heath = 0;
             e->heath = 0;
 
-			add_explosions(e->x, e->y, 32);
-			add_debris(e);
+            add_explosions(e->x, e->y, 32);
+            add_debris(e);
+            Game.sounds->play_sound(SND_PLAYER_DIE, CH_PLAYER);
             return 1;
         }
     }
@@ -913,9 +1061,25 @@ static void draw(void) {
     draw_enemy();
     draw_debris();
     draw_explosions();
+    draw_hud();
+}
+
+static void draw_hud(void) {
+    Game.text->draw_text(10, 10, 255, 255, 255, "SCORE: %03d", Game.stage->score);
+
+    Game.text->draw_text(SCREEN_W - (5*GLYPH_W) - 10, 10, 255,0,0, "%.2f", Game.elapsed);
+
+    if (Game.stage->score > 0 && Game.stage->score == highscore) {
+        Game.text->draw_text(10, (SCREEN_H - 10 - GLYPH_H), 0, 255, 0, "HIGH SCORE: %03d", highscore);
+    } else {
+        Game.text->draw_text(10, (SCREEN_H - 10- GLYPH_H), 255, 255, 255, "HIGH SCORE: %03d", highscore);
+    }
+
+
 }
 
 static void draw_background(void) {
+
     SDL_Rect dest;
     int x;
 
@@ -1031,6 +1195,7 @@ int main(int argc, char* argv[]) {
     // Make sure to clean up all resources before exit
     atexit(Game.quit);
 
+    Game.sounds->init_sounds();
     Game.stage->init_stage();
 
     then = SDL_GetTicks();
@@ -1059,10 +1224,8 @@ int main(int argc, char* argv[]) {
         Game.present_scene();
         capFrameRate(&then, &remainder);
         Uint64 end = SDL_GetPerformanceCounter();
-        float elapsed = (end - start) / (float)SDL_GetPerformanceFrequency();
-        printf("FPS: %.2f\r", (1.0f / elapsed));
+        Game.elapsed = 1.0f / ((end - start) / (float)SDL_GetPerformanceFrequency());
     };
 
     return 0;
-
 }

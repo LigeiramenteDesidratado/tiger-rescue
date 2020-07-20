@@ -1,8 +1,9 @@
 #include <SDL2/SDL_events.h>
 #include <SDL2/SDL_rect.h>
 #include <SDL2/SDL_render.h>
+#include <SDL2/SDL_mixer.h>
 #include "defs.h"
-
+#include "sound.h"
 
 typedef struct Entity Entity;
 
@@ -40,6 +41,23 @@ typedef struct {
     void (*blitRect)(SDL_Texture* texture, SDL_Rect* src, int x, int y);
 
 } Graphics;
+
+typedef struct {
+    Mix_Chunk* sounds[SND_MAX];
+    void (*init_sounds)(void);
+    void (*load_sounds)(void);
+    void (*play_sound)(int, int);
+
+    Mix_Music* music;
+    void (*load_music)(char*);
+    void (*play_music)(int);
+
+} Sounds;
+
+typedef struct {
+    char drawTextBuffer[MAX_LINE_LENGTH];
+    void (*draw_text)(int, int, int, int, int, char*, ...);
+} Text;
 
 typedef struct{
     int keyboard[MAX_KEYBOARD_KEYS];
@@ -80,6 +98,8 @@ typedef struct {
 
     Explosion explosionHead, *explosionTail;
     Debris debrisHead, *debrisTail;
+
+    int score;
     void (*init_stage)(void);
     void (*reset_stage)(void);
 

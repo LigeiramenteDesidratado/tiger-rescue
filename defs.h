@@ -14,3 +14,10 @@
 #define MAX(a,b) (((a)>(b))?(a):(b))
 
 #define MAX_STARS 500
+
+#define MAX_SND_CHANNELS 8
+
+#define GLYPH_H 28
+#define GLYPH_W 18
+#define MAX_LINE_LENGTH 1024
+
